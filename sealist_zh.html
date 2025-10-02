@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>文献管理器 – 优化版 v4.2</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <!-- 核心库 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- 自定义样式 -->
+  <style>
+    /* ---- 通用 Tag 胶囊 ---- */
+    .chip{
+      display:inline-block;margin:2px;padding:2px 8px;
+      border-radius:9999px;font-size:12px;line-height:1;
+      white-space:nowrap;user-select:none;cursor:pointer;
+      background:#e5e7eb;color:#111827;transition:all .15s;
+    }
+    .chip-selected{background:#3b82f6!important;color:#fff!important;}
+    .chip-author  {background:#bbf7d0;}   /* green-200 */
+    .chip-imp     {background:#fecaca;}   /* red-200 */
+    .chip-read    {background:#bfdbfe;}   /* sky-200 */
+    .assoc-selected{background:#dbeafe!important;}
+
+    /* ---- Tag 内联编辑 UI ---- */
+    .tag-wrap{position:relative;display:inline-block;margin:0 4px 4px 0;}
+
+    .tag-btn{
+      position:absolute;top:-6px;right:-6px;
+      width:12px;height:12px;border-radius:9999px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:8px;border:1px solid #d1d5db; /* gray-300 */
+      background:#fff;cursor:pointer;transition:background .15s;
+      line-height:1;
+    }
+    .tag-btn:hover{background:#f3f4f6;}       /* gray-100 */
+    .tag-btn.del:hover{background:#fecaca;}    /* red-200 */
+    .tag-btn.ren:hover{background:#bfdbfe;}    /* blue-200 */
+    .tag-btn.del{right:0px;}                 /* ★ 新增 */
+    .tag-btn.ren{right:14px;}
+  </style>
+</head>
+
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
+  <h1 class="text-2xl font-bold mb-4">📚 本地文献与笔记管理器</h1>
+
+  <!-- ===== 文献区 ===== -->
+  <section class="w-full max-w-6xl mb-6 bg-white p-4 rounded-xl shadow">
+    <div class="flex flex-col lg:flex-row gap-4">
+      <!-- 左列：录入+列表 -->
+      <div class="flex-1">
+        <!-- —— 录入栏 —— -->
+        <div class="flex flex-wrap gap-2 mb-3 w-full items-center">
+          <!-- 搜索区域 + 两种模式按钮 -->
+          <div class="flex gap-1 flex-1">
+            <input id="search" placeholder="🔍 搜索标题 / Tag / 作者" class="flex-1 border rounded p-2" list="search-suggestions" />
+            <button id="search-current" class="px-3 py-2 bg-blue-600 text-white rounded whitespace-nowrap">局部搜索</button>
+            <button id="search-global" class="px-3 py-2 bg-emerald-600 text-white rounded whitespace-nowrap">全局搜索</button>
+            
+            <datalist id="search-suggestions"></datalist>
+          </div>
+          <input id="lit-title" placeholder="标题(可留空)" class="flex-1 border rounded p-2" />
+          <input id="lit-path" placeholder="./paper.pdf 或链接" class="flex-1 border rounded p-2" />
+          <input id="lit-folders" placeholder="收藏夹,逗号" list="folder-list" class="flex-1 border rounded p-2" />
+          <input id="lit-author" placeholder="作者/团组" list="author-list" class="flex-1 border rounded p-2" />
+          <select id="lit-importance" class="border rounded p-2">
+            <option value="">重要程度</option><option>1</option><option>2</option><option>3</option><option>4</option>
+          </select>
+          <select id="lit-read" class="border rounded p-2">
+            <option value="">阅读情况</option><option>未读</option><option>只浅读</option><option>已读</option><option>已精读</option>
+          </select>
+          <button id="add-lit" class="px-3 py-2 bg-blue-600 text-white rounded">添加</button>
+          <button id="open-drop" class="px-3 py-2 bg-purple-600 text-white rounded">拖拽/批量</button>
+          <button id="clear-lit-filter" class="px-2 py-1 bg-gray-300 rounded">清除过滤</button>
+        </div>
+
+        <!-- —— 三类筛选按钮（彩色 Chips） —— -->
+        <div id="search-tags" class="space-y-2 mb-4"></div>
+
+        <!-- —— 文献列表 —— -->
+        <ul id="lit-list" class="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"></ul>
+        <div id="pagination" class="flex justify-center items-center gap-4 mt-4"></div>
+      </div>
+
+      <!-- 右列：过滤面板（简化） -->
+      <aside class="w-full lg:w-56 bg-gray-50 p-3 rounded-xl text-sm space-y-2 h-fit">
+        <h3 class="font-semibold">
+          全部 Tag (多选)
+          <button id="edit-tags"
+                  class="ml-2 text-xs text-blue-600 hover:underline"
+                  title="重命名 / 删除 Tag">✎</button>
+        </h3>
+        <div id="tag-list" class="flex flex-wrap gap-1"></div>
+        <hr class="my-2" />
+        <div class="flex items-center gap-2"><label>每页</label><input id="page-size" type="number" min="1" class="w-16 border rounded p-1 text-center" /></div>
+        <div>
+          <div class="flex items-center gap-1 mt-1"><span>收藏夹</span> 
+          <button id="rename-folder" class="text-xs text-blue-600 hover:underline" title="重命名">✎</button>
+          <button id="add-folder" class="ml-auto text-xs text-green-600 hover:underline" hover:underline" title="新建">➕</button>
+          <button id="delete-folder" class="ml-auto text-xs text-red-600  hover:underline" title="删除">🗑</button></div>
+          <select id="folder-filter" class="border rounded p-1 w-full"></select>
+          <div class="mt-3 flex flex-col gap-2">            <!-- ← 只加 mt-3 -->
+            <button id="export-data"
+                    class="w-full px-3 py-2 bg-amber-500 text-white rounded">
+                             下载数据
+            </button>
+
+            <label class="cursor-pointer w-full px-3 py-2 bg-amber-600 text-white rounded text-center">
+                                    导入数据
+              <input type="file" id="import-data" accept=".json" class="hidden">
+            </label>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===== 笔记区 (保留原功能) ===== -->
+  <section class="w-full max-w-6xl mb-6 bg-white p-4 rounded-xl shadow">
+    <h2 class="text-xl font-semibold mb-2">添加笔记</h2>
+    <input id="note-title" class="w-full border rounded p-2 mb-2" placeholder="笔记标题" />
+    <textarea id="note-md" rows="6" class="w-full border rounded p-2 mb-2" placeholder="Markdown..."></textarea>
+    <!-- 批量文件夹 & 单文件路径 双入口 -->
+    <div class="flex flex-wrap items-center gap-3 mb-2">
+      <!-- 📁 批量录入：可直接选文件夹 -->
+      <label class="cursor-pointer px-3 py-1 bg-gray-200 rounded">
+        📁 批量录入 (选文件夹)
+        <input type="file"
+               id="note-folder"
+               class="hidden"
+               webkitdirectory
+               directory
+               multiple>
+      </label>
+
+      <!-- ✍️ 手动输入单个 PDF 路径 -->
+      <input id="note-path-manual"
+             class="border rounded p-1 flex-1"
+             placeholder="手动输入 PDF 相对/绝对路径，如 ./笔记/abc.pdf">
+    </div>
+
+    <!-- 关联按钮区 -->
+    <div class="flex items-center gap-3 mb-2">
+      <button id="add-note" class="px-3 py-2 bg-green-600 text-white rounded">保存笔记</button>
+      <button id="start-assoc"  class="px-3 py-2 bg-blue-500  text-white rounded">➕ 关联文献</button>
+      <button id="finish-assoc" class="px-3 py-2 bg-green-600 text-white rounded hidden">✅ 完成关联 (Enter)</button>
+    </div>
+
+    
+    <ul id="note-list" class="list-disc pl-5 space-y-1 mt-4"></ul>
+  </section>
+
+  <section id="view" class="w-full max-w-6xl bg-white p-4 rounded-xl shadow hidden"></section>
+
+  <!-- ===== 拖拽模态 ===== -->
+  <div id="drop-modal" class="fixed inset-0 bg-black/40 flex items-center justify-center hidden z-50">
+    <div class="bg-white p-6 rounded-xl w-[90%] max-w-lg relative">
+      <button id="close-modal" class="absolute top-2 right-2">✖</button>
+      <h3 class="text-lg font-semibold mb-2">拖拽文件或选择文件夹</h3>
+      <div id="drop-zone" class="flex items-center justify-center border-4 border-dashed border-gray-400 rounded-lg h-40 mb-4"><span class="text-gray-500 select-none">拖文件到此</span></div>
+      <button id="choose-folder" class="px-3 py-2 bg-blue-600 text-white rounded">选择文件夹</button>
+      <input id="folder-input" type="file" webkitdirectory multiple class="hidden" />
+    </div>
+  </div>
+
+  <!-- ===== 管理模态 ===== -->
+  <div id="manage-modal" class="fixed inset-0 bg-black/40 flex items-center justify-center hidden z-50">
+    <div class="bg-white p-6 rounded-xl w-[90%] max-w-lg relative">
+      <button id="close-manage-modal" class="absolute top-2 right-2">✖</button>
+      <h3 id="manage-title" class="text-lg font-semibold mb-4">管理文献</h3>
+      <div class="space-y-3">
+        <div>
+          <h4 class="font-medium mb-1">收藏夹</h4>
+          <div id="manage-folders" class="flex flex-wrap gap-2"></div>
+          <div class="mt-2 flex gap-2">
+            <input id="new-folder-input" list="folder-suggestions" autocomplete="off" class="border rounded px-2 flex-1" placeholder="输入收藏夹名/可新增">
+            <button id="new-folder-btn" class="px-3 bg-withe-600 text-white rounded">➕</button>
+        </div>
+        <datalist id="folder-suggestions"></datalist>
+        <div>
+          <h4 class="font-medium mb-1">作者/团组</h4>
+          <input id="manage-author" class="w-full border rounded p-1" list="author-list" />
+        </div>
+        <div class="flex gap-4">
+          <div class="flex-1">
+            <h4 class="font-medium mb-1">重要程度</h4>
+            <select id="manage-importance" class="border rounded p-1 w-full"><option value="">未设置</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+          </div>
+          <div class="flex-1">
+            <h4 class="font-medium mb-1">阅读情况</h4>
+            <select id="manage-read" class="border rounded p-1 w-full"><option value="">未设置</option><option value="未读">未读</option><option value="只浅读">只浅读</option><option value="已读">已读</option><option value="已精读">已精读</option></select>
+          </div>
+        </div>
+        <div>
+          <h4 class="font-medium mb-1 flex items-center gap-2">Tag <span class="text-xs text-gray-400">(Tab / Enter / 失焦确认)</span></h4>
+          <div id="manage-tags-box" class="flex flex-wrap gap-1"></div>
+          <input id="manage-tag-input" class="w-full border rounded p-1 mt-1" placeholder="输入或选择 Tag" list="tag-list-dl" />
+          <datalist id="tag-list-dl"></datalist>
+        </div>
+        <div class="text-right pt-2"><button id="save-manage" class="px-4 py-2 bg-green-600 text-white rounded">保存</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== datalists ===== -->
+  <datalist id="folder-list"></datalist>
+  <datalist id="author-list"></datalist>
+
+<script>
+/*************************
+ * 数据与工具函数
+ *************************/
+const KEY = 'bibData';
+const DEF = { literature: [], notes: [], folders: ['默认'] };
+let data = JSON.parse(localStorage.getItem(KEY) || JSON.stringify(DEF));
+const $ = (s) => document.querySelector(s);
+const gid = () => Date.now() + Math.random().toString(36).slice(2, 8);
+const save = () => localStorage.setItem(KEY, JSON.stringify(data));
+const uniq = (a) => [...new Set(a)];
+const setSel = (sel, arr, val) => { if(!sel) return; sel.innerHTML = ''; arr.forEach(v => sel.add(new Option(v, v))); sel.value = val; };
+
+/*************************
+ * 全局状态
+ *************************/
+let page = 1,
+    ps = parseInt(localStorage.getItem('ps')) || 9,
+    curFolder = '全部',
+    searchTxt = '',
+    tagFilters = [],      // 多选 Tag
+    authorFilter = '全部',
+    importanceFilter = '全部',
+    readFilter = '全部';
+let editingId = null;              // 笔记当前是否处在“编辑模式”
+let tagEditMode = false;      // 是否处于“Tag 编辑”模式
+/* —— 关联模式 —— */
+let assocMode = false;     // 正在关联？
+let assocSel  = [];        // 已选文献 id 集
+let litFilterIDs = [];     // “查看关联文献” 时用的过滤
+let assocNoteId = null;     // 当前正在关联的笔记 id
+
+
+
+
+$('#page-size').value = ps;
+
+/*************************
+ * Datalist 构建
+ *************************/
+function refreshDatalists() {
+  $('#folder-list').innerHTML = data.folders.map(f => `<option value="${f}">`).join('');
+  $('#author-list').innerHTML = uniq(data.literature.map(l => l.author).filter(Boolean)).map(a => `<option value="${a}">`).join('');
+  $('#tag-list-dl').innerHTML = uniq(data.literature.flatMap(l => l.tags || [])).map(t => `<option value="${t}">`).join('');
+  // 搜索建议
+  const suggestions = uniq([
+    ...data.literature.map(l => l.title),
+    ...data.literature.flatMap(l => l.tags || []),
+    ...data.literature.map(l => l.author).filter(Boolean)
+  ]);
+  $('#search-suggestions').innerHTML = suggestions.map(s => `<option value="${s}">`).join('');
+  buildSearchTags();
+}
+
+/*************************
+ * 过滤器（收藏夹 / 每页）
+ *************************/
+function refreshFilters() { setSel($('#folder-filter'), ['全部', ...data.folders], curFolder); }
+
+/*************************
+ * 侧栏 Tag 面板
+ *************************/
+function buildTagPanel() {
+  const box = $('#tag-list');
+  if (!box) return;
+
+  // 收集所有 Tag
+  const allTags = Array.from(
+    new Set(data.literature.flatMap(l => l.tags || []))
+  ).sort();
+
+  box.innerHTML = '';
+
+  allTags.forEach(tag => {
+    /* 默认胶囊 */
+    const span = document.createElement('span');
+    span.className = 'chip mr-1 mb-1';
+    span.textContent = tag;
+
+    if (!tagEditMode) {
+      /* —— 普通模式：点击多选 —— */
+      span.onclick = () => {
+        if (tagFilters.includes(tag)) {
+          tagFilters = tagFilters.filter(t => t !== tag);
+          span.classList.remove('bg-blue-100');
+        } else {
+          tagFilters.push(tag);
+          span.classList.add('bg-blue-100');
+        }
+        page = 1; renderLit();
+      };
+      if (tagFilters.includes(tag)) span.classList.add('bg-blue-100');
+      box.appendChild(span);
+    } else {
+      /* —— 编辑模式：包一层 div + 小按钮 —— */
+      const wrapper = document.createElement('div');
+      wrapper.className = 'tag-wrap'; 
+
+      /* 删除按钮 */
+      const del = document.createElement('button');
+      del.textContent = '❌';
+      del.title = '删除';
+      del.className = 'tag-btn del'
+      del.onclick = e => {
+        e.stopPropagation();
+        if (!confirm(`确定删除 Tag "${tag}"？`)) return;
+        data.literature.forEach(l => {
+          if (l.tags) l.tags = l.tags.filter(t => t !== tag);
+        });
+        save(); buildTagPanel(); renderLit();
+      };
+
+      /* 重命名按钮 */
+      const ren = document.createElement('button');
+      ren.innerHTML = '💙';
+      ren.title = '重命名';
+      ren.className = 'tag-btn ren';
+      ren.onclick = e => {
+        e.stopPropagation();
+        toInput(wrapper, tag);
+      };
+
+      wrapper.appendChild(span);
+      wrapper.appendChild(del);
+      wrapper.appendChild(ren);
+      box.appendChild(wrapper);
+    }
+  });
+
+  /* 内联改名：span → input */
+  function toInput(wrapper, oldTag) {
+    const input = document.createElement('input');
+    input.type  = 'text';
+    input.value = oldTag;
+    input.className = 'border rounded px-1 text-xs';
+
+    const saveRename = () => {
+      const newTag = input.value.trim();
+      if (!newTag || newTag === oldTag) return rebuild();
+      const exists = allTags.includes(newTag);
+      if (exists) { alert('已存在同名 Tag'); return; }
+
+      data.literature.forEach(l => {
+        if (l.tags) l.tags = l.tags.map(t => (t === oldTag ? newTag : t));
+      });
+      save(); rebuild();
+    };
+
+    const rebuild = () => { buildTagPanel(); renderLit(); };
+
+    input.onkeydown = e => {
+      if (e.key === 'Enter') saveRename();
+      if (e.key === 'Escape') rebuild();
+    };
+    input.onblur    = rebuild;
+
+    wrapper.innerHTML = '';        // 清空原内容
+    wrapper.appendChild(input);
+    input.focus();
+  }
+}
+
+
+/*************************
+ * 搜索提示区（三类筛选按钮）
+ *************************/
+function buildSearchTags() {
+  const area = $('#search-tags'); area.innerHTML = '';
+  // 作者/团组
+  const authors = uniq(data.literature.map(l => l.author).filter(Boolean));
+  if (authors.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'space-y-1';
+    // 第一行 label + 全部
+    const row1 = document.createElement('div');
+    row1.className = 'flex items-center gap-1';
+    row1.innerHTML = `<span class="font-medium">作者/团组:</span><span class="chip ${authorFilter==='全部'?'chip-selected':''}" data-author="全部">全部</span>`;
+    wrap.appendChild(row1);
+    // 第二行 chips
+    const row2 = document.createElement('div'); row2.className = 'flex flex-wrap gap-1';
+    authors.forEach(a => {
+      const span = document.createElement('span');
+      span.textContent = a;
+      span.dataset.author = a;
+      span.className = `chip chip-author${authorFilter===a?' chip-selected':''}`;
+      row2.appendChild(span);
+    });
+    wrap.appendChild(row2);
+    area.appendChild(wrap);
+  }
+  // 重要程度
+  const wrapImp = document.createElement('div'); wrapImp.className = 'space-y-1 mt-2';
+  const row1i = document.createElement('div'); row1i.className = 'flex items-center gap-1';
+  row1i.innerHTML = `<span class="font-medium">重要程度:</span><span class="chip ${importanceFilter==='全部'?'chip-selected':''}" data-imp="全部">全部</span>`;
+  wrapImp.appendChild(row1i);
+  const row2i = document.createElement('div'); row2i.className='flex flex-wrap gap-1';
+  ['1','2','3','4'].forEach(v=>{
+    const span=document.createElement('span');
+    span.textContent=v;
+    span.dataset.imp=v;
+    span.className=`chip chip-imp${importanceFilter===v?' chip-selected':''}`;
+    row2i.appendChild(span);
+  });
+  wrapImp.appendChild(row2i);
+  area.appendChild(wrapImp);
+  // 阅读情况
+  const wrapRead=document.createElement('div');wrapRead.className='space-y-1 mt-2';
+  const row1r=document.createElement('div');row1r.className='flex items-center gap-1';
+  row1r.innerHTML=`<span class="font-medium">阅读情况:</span><span class="chip ${readFilter==='全部'?'chip-selected':''}" data-read="全部">全部</span>`;
+  wrapRead.appendChild(row1r);
+  const row2r=document.createElement('div');row2r.className='flex flex-wrap gap-1';
+  ['未读','只浅读','已读','已精读'].forEach(r=>{
+    const span=document.createElement('span');span.textContent=r;span.dataset.read=r;span.className=`chip chip-read${readFilter===r?' chip-selected':''}`;row2r.appendChild(span);
+  });
+  wrapRead.appendChild(row2r);
+  area.appendChild(wrapRead);
+}
+// 点击处理
+$('#search-tags').addEventListener('click',e=>{
+  const t=e.target;if(!t.classList.contains('chip')) return;
+  if(t.dataset.author!==undefined){ authorFilter = (authorFilter===t.dataset.author?'全部':t.dataset.author); }
+  else if(t.dataset.imp!==undefined){ importanceFilter = (importanceFilter===t.dataset.imp?'全部':t.dataset.imp); }
+  else if(t.dataset.read!==undefined){ readFilter = (readFilter===t.dataset.read?'全部':t.dataset.read); }
+  buildSearchTags(); page=1; renderLit();
+});
+
+/*************************
+ * 文献列表渲染 (含多 Tag + 三类过滤)
+ *************************/
+/* ========= 文献列表渲染 ========= */
+function renderLit(globalSearch = false) {
+  const list = $('#lit-list');
+  list.innerHTML = '';
+
+  /* ————— 1. 数据准备 ————— */
+  let arr = [...data.literature];
+
+  /* ① 若在“查看关联文献”状态，仅保留指定 id */
+  if (litFilterIDs.length) {
+    globalSearch = true;
+    arr = arr.filter(l => litFilterIDs.includes(l.id));
+  }
+
+  /* ② 常规过滤（当不是全局搜索时才用文件夹 / Tag / 重要度…） */
+  if (!globalSearch) {
+    if (curFolder      !== '全部') arr = arr.filter(l => l.folders.includes(curFolder));
+    if (tagFilters.length)         arr = arr.filter(l => tagFilters.every(t => (l.tags || []).includes(t)));
+    if (authorFilter   !== '全部') arr = arr.filter(l => l.author === authorFilter);
+    if (importanceFilter !== '全部') arr = arr.filter(l => String(l.importance) === importanceFilter);
+    if (readFilter     !== '全部') arr = arr.filter(l => l.read === readFilter);
+  }
+
+  /* ③ 关键词搜索 */
+  if (searchTxt) {
+    const kw = searchTxt.toLowerCase();
+    arr = arr.filter(l =>
+      [l.title, l.author, (l.tags || []).join(',')].join('\u0000').toLowerCase().includes(kw)
+    );
+  }
+
+  /* ————— 2. 分页计算 ————— */
+  const maxPage = Math.max(1, Math.ceil(arr.length / ps));
+  if (page > maxPage) page = maxPage;
+
+  const pageArr = arr.slice((page - 1) * ps, page * ps);
+
+  /* ————— 3. 逐条渲染 ————— */
+  pageArr.forEach(l => {
+    /* 标签 chips */
+    const chips = [
+      ...(l.tags || []).map(t => `<span class='chip mr-1'>${t}</span>`)
+    ];
+    if (l.author)      chips.push(`<span class='chip bg-green-200 mr-1'>👤${l.author}</span>`);
+    if (l.importance)  chips.push(`<span class='chip bg-red-200 mr-1'>⭐${l.importance}</span>`);
+    if (l.read)        chips.push(`<span class='chip bg-blue-200 mr-1'>📖${l.read}</span>`);
+
+    /* 关联模式：选中状态 & 是否显示按钮条 */
+    const isSel   = assocMode && assocSel.includes(l.id);
+    const liClass = [
+      'bg-gray-50 p-2 rounded relative group',
+      assocMode ? 'cursor-pointer' : 'hover:bg-gray-100',
+      isSel ? 'assoc-selected' : ''
+    ].join(' ');
+
+    const btnBar  = assocMode
+      ? ''   /* 选文献时隐藏管理/删除键 */
+      : `<div class='flex gap-1 opacity-0 group-hover:opacity-100'>
+           <button class='link-btn   text-xs text-emerald-600' title='更新链接'>🔗</button>
+           <button class='manage-btn text-xs text-blue-600'>⚙️</button>
+           <button class='del-btn text-xs text-red-600'>🗑️</button>
+         </div>`;
+
+    /* 主标题 / 链接 */
+    const titleHTML = l.path
+      ? `<a href='${l.path}' target='_blank' class='text-blue-600 underline'>
+           ${l.title || l.path.split('/').pop()}
+         </a>`
+      : l.title;
+
+    /* 插入 DOM */
+    list.insertAdjacentHTML(
+      'beforeend',
+      `<li class='${liClass}' data-id='${l.id}'>
+         <div class='flex justify-between items-start gap-1'>
+           <span class='flex-1 break-all'>${titleHTML}</span>
+           ${btnBar}
+         </div>
+         <div class='mt-1'>${chips.join('')}</div>
+       </li>`
+    );
+
+    /* 事件绑定 */
+    const liEl = list.lastElementChild;
+
+    if (assocMode) {
+      /* —— 关联模式：点整条切换选中 —— */
+      liEl.addEventListener('click', e => {
+        if (e.target.tagName === 'A') return;      // 点击超链接不触发
+        const id = liEl.dataset.id;
+        const idx = assocSel.indexOf(id);
+        if (idx > -1) {
+          assocSel.splice(idx, 1);
+          liEl.classList.remove('assoc-selected');
+        } else {
+          assocSel.push(id);
+          liEl.classList.add('assoc-selected');
+        }
+      });
+    } else {
+      /* —— 普通模式：管理 / 删除 —— */
+      liEl.querySelector('.manage-btn')?.addEventListener('click',
+        e => openManageModal(liEl.dataset.id));
+      liEl.querySelector('.del-btn')?.addEventListener('click',
+        e => deleteLitHandler(liEl.dataset.id));
+      liEl.querySelector('.link-btn')?.addEventListener(
+        'click',
+        e => updateLitLink(liEl.dataset.id)
+      );
+    }
+  });
+
+  /* ————— 4. 分页按钮 ————— */
+  pagination(maxPage);
+}
+
+
+/*************************
+ * 分页控件
+ *************************/
+function pagination(max){
+  const pg=$('#pagination'); pg.innerHTML='';
+  const mkBtn=(txt,dis)=>`<button class='px-3 py-1 border rounded ${dis?'opacity-40':''}' ${dis?'disabled':''}>${txt}</button>`;
+  pg.insertAdjacentHTML('beforeend',mkBtn('上一页',page===1));
+  pg.insertAdjacentHTML('beforeend',`<span class='mx-2'>${page}/${max}</span>`);
+  pg.insertAdjacentHTML('beforeend',mkBtn('下一页',page===max));
+  pg.querySelectorAll('button')[0].onclick=()=>{page--;renderLit();};
+  pg.querySelectorAll('button')[1].onclick=()=>{page++;renderLit();};
+}
+
+/*************************
+ * 添加文献
+ *************************/
+function addLitHandler(){
+  const path=$('#lit-path').value.trim();
+  if(!path){alert('路径不能为空');return;}
+  let title=$('#lit-title').value.trim();
+  if(!title) title = path.split(/[\\/]/).pop();
+  const folders=$('#lit-folders').value.split(',').map(s=>s.trim()).filter(Boolean);
+  folders.forEach(f=>{ if(f && !data.folders.includes(f)) data.folders.push(f); });
+  const author=$('#lit-author').value.trim();
+  const importance=$('#lit-importance').value;
+  const read=$('#lit-read').value;
+  if(data.literature.some(l=>l.title===title && l.path===path)) return alert('已存在同名文献');
+  data.literature.push({id:gid(),title,path,folders:folders.length?folders:['默认'],tags:[...folders],author,importance,read});
+  save();
+  ['#lit-title','#lit-path','#lit-folders','#lit-author'].forEach(sel=>$(sel).value='');
+  $('#lit-importance').value=''; $('#lit-read').value='';
+  refreshDatalists(); refreshFilters(); buildTagPanel(); renderLit();
+}
+$('#add-lit').addEventListener('click',addLitHandler);
+
+/*************************
+ * 拖拽 / 批量上传
+ *************************/
+$('#open-drop').addEventListener('click',()=>$('#drop-modal').classList.remove('hidden'));
+$('#close-modal').addEventListener('click',()=>$('#drop-modal').classList.add('hidden'));
+
+// Prevent default for window drag
+['dragover','drop'].forEach(evt=>window.addEventListener(evt,e=>e.preventDefault()));
+['dragenter','dragover'].forEach(evt=>$('#drop-zone').addEventListener(evt,e=>{e.preventDefault(); e.currentTarget.classList.add('bg-indigo-50');}));
+['dragleave','drop'].forEach(evt=>$('#drop-zone').addEventListener(evt,e=>{e.preventDefault(); e.currentTarget.classList.remove('bg-indigo-50');}));
+$('#drop-zone').addEventListener('drop',e=>{ filesAdd(e.dataTransfer.files); });
+$('#choose-folder').addEventListener('click',()=>$('#folder-input').click());
+$('#folder-input').addEventListener('change',e=>{ filesAdd(e.target.files,true); e.target.value=''; });
+
+function filesAdd(fs, rel = false) {
+  let add = 0;
+  [...fs].forEach(f => {
+    const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+    if (!['.pdf', '.doc', '.docx', '.txt', '.md'].includes(ext)) return;
+
+    // 1) 完整相对路径  (含子目录)
+    const path = './' + (rel && f.webkitRelativePath ? f.webkitRelativePath : f.name);
+    // 2) 同名文件去重：若已存在就只更新 path
+    const existed = data.literature.find(l => l.title === f.name);
+    if (existed) {
+      if (existed.path !== path) existed.path = path;            // 仅改路径
+      return;                                                    // 不新增
+    }
+
+
+    // 2) folders = 顶层目录
+    //    tags = 顶层 + 次级目录(若存在且不是文件名)
+    let folders = [], tags = [];
+    if (rel && f.webkitRelativePath) {
+      const parts = f.webkitRelativePath.split('/');
+      const root = parts[0];                 // 21cm
+      folders = [root];
+      tags = [root];
+      if (parts.length >= 3 && parts[1]) {            // 若存在一级子目录
+        folders.push(parts[1]);
+        tags.push(parts[1]);
+      } 
+      folders.forEach(fd => { if (!data.folders.includes(fd)) data.folders.push(fd); });
+    }
+
+    // 3) 入库
+    data.literature.push({
+      id: gid(),
+      title: f.name,
+      path,
+      folders: folders.length ? folders : ['默认'],
+      tags,
+      author: '',
+      importance: '',
+      read: ''
+    });
+    add++;
+  });
+  
+
+  if (add) alert(`新增 ${add} 篇文献`);
+  save();
+  $('#drop-modal').classList.add('hidden');
+  refreshDatalists(); refreshFilters(); buildTagPanel(); renderLit();
+
+
+
+  // 6) UI 刷新
+  if (add) alert('新增 ' + add + ' 篇文献');
+  save();
+  $('#drop-modal').classList.add('hidden');
+  refreshDatalists();
+  refreshFilters();
+  buildTagPanel();
+  renderLit();
+}
+
+/*************************************************
+ *  ── 笔记模块 ──
+ *  依赖全局：data、save()、renderLit()、gid()
+ *************************************************/
+
+/* 🔄 把当前文献列表渲染成可勾选列表 */
+function updateLitCheckbox (preSel = []) {
+  const box = $('#link-lit');
+  if (!box) return;
+  box.innerHTML = '';
+  data.literature.forEach(l => {
+    const label = document.createElement('label');
+    label.className = 'flex items-center gap-1 mr-3 mb-1';
+    label.innerHTML =
+      `<input type="checkbox" value="${l.id}" ${preSel.includes(l.id) ? 'checked' : ''}>
+       <span>${l.title}</span>`;
+    box.appendChild(label);
+  });
+}
+
+/* 📑 渲染左侧笔记目录 */
+function renderNotes () {
+  const ul = $('#note-list'); ul.innerHTML='';
+  data.notes.forEach(n=>{
+    const refs = data.literature
+                   .filter(l=>n.litIds.includes(l.id))
+                   .map(l=>l.title);
+    const li = document.createElement('li');
+    li.className='flex flex-col gap-1';
+    li.innerHTML = `
+      <div class="flex items-center gap-2">
+        <span class="flex-1 cursor-pointer hover:underline" data-id="${n.id}">${n.title}</span>
+        <button class="text-blue-600"
+            onclick="startAssociate('${n.id}')">➕</button>
+        <button class="text-blue-600" data-edit="${n.id}">✏️</button>
+        <button class="text-red-600"  data-del ="${n.id}">🗑</button>
+        <button class="text-purple-600" data-show="${n.id}" title="只看关联文献">🔍</button>
+      </div>
+      ${refs.length?`<div class="text-xs text-gray-500 truncate ml-6">关联: ${refs.join(' , ')}</div>`:''}`;
+    li.onclick = e=>{
+      if(e.target.dataset.edit)   editNote(e.target.dataset.edit);
+      else if(e.target.dataset.del) deleteNote(e.target.dataset.del);
+      else if(e.target.dataset.show){ litFilterIDs = [...n.litIds]; page=1; renderLit(true); }
+      else if(e.target.dataset.id)  showNote(e.target.dataset.id);
+    };
+    ul.appendChild(li);
+  });
+}
+
+
+
+/*******************************************
+ * 保存 / 更新笔记  (批量文件夹 + 单路径)
+ *******************************************/
+$('#add-note')?.addEventListener('click', () => {
+  /* ===== 基本输入 ===== */
+  const titleInput  = $('#note-title');
+  const mdInput     = $('#note-md');
+  let   title       = titleInput.value.trim();
+  const mdText      = mdInput.value.trim();
+
+  const litIds = [...assocSel];   // ← 改成直接用全局选中
+
+
+  /* ===== 上传入口 ===== */
+  const dirInput    = $('#note-folder');          // 选文件夹
+  const pathInput   = $('#note-path-manual');     // 手动路径
+  const manualPath  = pathInput.value.trim();
+
+  /* ---- 1) 收集 folder 中的全部 PDF ---- */
+  let files = [];
+  if (dirInput && dirInput.files.length) {
+    files = [...dirInput.files]
+              .filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  }
+
+  /* ---- 2) 如有手动路径，构造一个“伪 File” 并 push ---- */
+  /* ---- 手动路径：构造伪 File ---- */
+  if (manualPath) {
+    let rel = manualPath.trim();
+
+  // ① 如果是绝对路径并且位于 HTML 同目录或子目录 → 转相对路径
+    if (rel.startsWith('/')) {
+      const baseDir = decodeURIComponent(window.location.pathname)
+                     .replace(/[^\/]*$/, '');            // /…/学习/
+      if (rel.startsWith(baseDir)) {
+        rel = '.' + rel.slice(baseDir.length);             // ./笔记/xxx.pdf
+      } else {
+        rel = 'file://' + rel;                             // fallback：file:///…
+      }
+    } else if (!rel.startsWith('./') && !rel.startsWith('../')){
+      rel = './' + rel;                                    // 裸文件名 → ./xxx.pdf
+    }
+
+    const fake = new File([], rel.split('/').pop());
+    fake._manualPath = rel;
+    files.push(fake);
+  }
+
+
+  /* ===== 编辑模式 ===== */
+  if (editingId) {
+    const n = data.notes.find(x => x.id === editingId);
+    if (!n) return alert('笔记不存在！');
+
+    /* 仅取 files[0] 替换现有附件（编辑模式不做批量） */
+    if (files.length) {
+      const f   = files[0];
+      const rel = './' + (f.webkitRelativePath || f._manualPath || f.name);
+      n.type = 'file';
+      n.path = rel;
+      if (!title) title = f.name.replace(/\.[^/.]+$/, '');
+    }
+
+    n.title  = title || n.title;
+    n.litIds = litIds;
+    if (n.type !== 'file') n.markdown = mdText;
+    editingId = null;
+
+  /* ===== 新建模式 ===== */
+  } else {
+
+    /* 循环 files：批量生成多条 PDF 笔记 */
+    files.forEach(f => {
+      const rel = './' + (f.webkitRelativePath || f._manualPath || f.name);
+      const autoTitle = f.name.replace(/\.[^/.]+$/, '');
+
+      data.notes.push({
+        id: gid(),
+        title: title || autoTitle,
+        litIds,
+        type: 'file',
+        path: rel
+      });
+    });
+
+    /* 若有 Markdown 且未上传文件，则单独生成一条 MD 笔记 */
+    if (!files.length && mdText) {
+      if (!title) return alert('标题不能为空！');
+      data.notes.push({
+        id: gid(),
+        title,
+        litIds,
+        type: 'markdown',
+        markdown: mdText
+      });
+    }
+  }
+
+  /* ===== 清理 & 刷新 ===== */
+  save();
+  titleInput.value   = '';
+  mdInput.value      = '';
+  dirInput.value     = '';
+  pathInput.value    = '';
+  assocSel = [];
+  assocNoteId = null;
+  updateLitCheckbox();
+  renderNotes();
+});
+
+/* ==== 关联文献按钮 ==== */
+$('#start-assoc').onclick = ()=>{
+  assocMode = true;
+  assocSel  = editingId
+      ? [...(data.notes.find(n=>n.id===editingId)?.litIds || [])]
+      : [...assocSel];
+  $('#start-assoc').classList.add('hidden');
+  $('#finish-assoc').classList.remove('hidden');
+  renderLit();
+};
+
+function startAssociate(noteId){
+  assocMode   = true;
+  assocNoteId = noteId;                         // 记录目标笔记
+  assocSel    = [...(data.notes.find(n=>n.id===noteId)?.litIds||[])]; // 预勾选已有
+  // 按钮显隐
+  document.getElementById('start-assoc').classList.add('hidden');
+  document.getElementById('finish-assoc').classList.remove('hidden');
+  document.getElementById('start-assoc').onclick = ()=>startAssociate(editingId ?? gid());
+  renderLit();                                  // 进入蓝底可点选模式
+}
+
+
+$('#finish-assoc').onclick = ()=>finishAssoc();
+document.addEventListener('keydown',e=>{ if(assocMode && e.key==='Enter') finishAssoc(); });
+
+function finishAssoc(){
+  // 写回到目标笔记
+  if(assocNoteId){
+    const n = data.notes.find(x=>x.id===assocNoteId);
+    if(n) n.litIds = [...assocSel];
+    save();
+    renderNotes();              // 刷新左侧目录“关联: …”
+  }
+  // 退出模式
+  assocMode   = false;
+  assocSel    = [];
+  assocNoteId = null;
+  document.getElementById('finish-assoc').classList.add('hidden');
+  document.getElementById('start-assoc').classList.remove('hidden');
+  document.addEventListener('keydown', e=>{
+    if(assocMode && e.key==='Enter') finishAssoc();
+  });
+
+  renderLit();                  // 恢复正常列表
+}
+
+
+
+function editNote(id, linkOnly=false){
+  const n = data.notes.find(x => x.id === id);
+  if(!n) return;
+
+  editingId = n.id;
+  $('#note-title').value = linkOnly ? '' : n.title;              // linkOnly 时不动标题正文
+  $('#note-md').value    = linkOnly || n.type==='file' ? '' : n.markdown || '';
+  updateLitCheckbox(n.litIds);
+
+  if(linkOnly){
+    // 把页面滚到“”复选框区
+    document.getElementById('link-lit')?.scrollIntoView({behavior:'smooth', block:'center'});
+    alert('已进入“关联文献”编辑模式，勾选后直接保存即可');
+  }else{
+    alert('已切换到编辑模式，修改后保存即可更新');
+  }
+}
+
+
+
+/* 🗑 删除笔记 */
+function deleteNote (id) {
+  if (!confirm('确定删除此笔记？')) return;
+  data.notes = data.notes.filter(n => n.id !== id);
+  save();
+  renderNotes();
+}
+
+/* 📖 查看笔记详情（与 showLit 共用 #view） */
+function showNote (id) {
+  const n = data.notes.find(x => x.id === id);
+  const v = $('#view');
+  const rel = data.literature.filter(l => n.litIds.includes(l.id));
+  const relHTML = rel.length
+    ? rel.map(l=>`<li><a href="${l.path}" target="_blank" class="text-blue-600 underline">${l.title}</a></li>`).join('')
+    : '<li>暂无</li>';
+
+  v.innerHTML = `
+    <button class="mb-2 text-sm text-red-600" onclick="hideView()">返回</button>
+    <button class="mb-2 ml-2 text-sm text-blue-600" onclick="editNote('${n.id}')">继续编辑</button>
+    <button class="px-3 py-2 bg-blue-500 text-white rounded"
+        onclick="startAssociate('${n.id}')">➕ 关联文献</button>
+
+
+    <h2 class="text-xl font-bold mb-2">${n.title}</h2>
+    ${
+      n.type === 'file'
+        ? `<iframe src="${n.path}" class="w-full h-[65vh] border mb-4"></iframe>`
+        : `<article class="prose max-w-none mb-4">${marked.parse(n.markdown)}</article>`
+    }
+    <h3 class="font-semibold mb-1">关联文献</h3>
+    <ul class="list-disc pl-5">${relHTML}</ul>`;
+  v.classList.remove('hidden');
+}
+
+
+/* ↩️ 隐藏右侧详情区（共用函数即可） */
+function hideView () {
+  $('#view')?.classList.add('hidden');
+}
+
+/* 📌 初始渲染（在页面加载完毕后调用一次） */
+updateLitCheckbox();
+renderNotes();
+
+
+            
+     
+
+/*************************
+ * 删除逻辑
+ *************************/
+function deleteLitHandler(id){
+  if(!confirm('确定删除?')) return;
+  data.literature = data.literature.filter(l=>l.id!==id);
+  save();
+  refreshDatalists(); buildTagPanel(); renderLit();
+}
+
+/* === 单篇文献：更新路径 / 链接 === */
+function updateLitLink(id){
+  const lit = data.literature.find(l=>l.id===id);
+  if(!lit) return;
+
+  const neu = prompt('输入新的 PDF 路径或 URL：', lit.path);
+  if(!neu || neu === lit.path) return;
+
+  // 可在此处做合法性校验，如只允许 .pdf
+  const isAbs = /^(https?:\/\/|file:\/\/|\/|[a-zA-Z]:[\\/])/.test(neu);
+  lit.path = isAbs || neu.startsWith('./') ? neu : './' + neu;
+
+  save();
+  renderLit();         // 立即刷新列表
+  alert('已更新文献链接！');
+}
+
+
+/*************************
+ * 管理模态 (保持不变)
+ *************************/
+let currentManageId = null;
+
+function openManageModal(id) {
+  currentManageId = id;
+  const lit = data.literature.find(l => l.id === id); if (!lit) return;
+  $('#manage-title').textContent = '管理文献 – ' + lit.title;
+  
+  buildManageFolders(); 
+  document.getElementById('folder-suggestions').innerHTML = '';  // 只清空
+  
+  const box = $('#manage-folders'); box.innerHTML = '';
+  data.folders.forEach(f => box.insertAdjacentHTML('beforeend', `<label class='flex items-center gap-1 mr-2'><input type='checkbox' value='${f}' ${lit.folders.includes(f) ? 'checked' : ''}>${f}</label>`));
+  $('#manage-author').value = lit.author || '';
+  $('#manage-importance').value = lit.importance || '';
+  $('#manage-read').value = lit.read || '';
+  const tagBox = $('#manage-tags-box'); tagBox.innerHTML = '';
+  (lit.tags || []).forEach(addTagChip);
+  $('#manage-tag-input').value = '';
+  $('#manage-modal').classList.remove('hidden');
+}
+
+$('#save-manage').onclick = () => {
+  const lit = data.literature.find(l => l.id === currentManageId); if (!lit) return;
+  lit.folders = [...$('#manage-folders').querySelectorAll('input:checked')].map(c => c.value);
+  if (!lit.folders.length) lit.folders = ['默认'];
+  lit.author = $('#manage-author').value.trim();
+  lit.importance = $('#manage-importance').value;
+  lit.read = $('#manage-read').value;
+  const extraTags = [...$('#manage-tags-box').children].map(c => c.dataset.tag);
+  lit.tags = uniq(extraTags);
+  save();
+  $('#manage-modal').classList.add('hidden');
+  refreshDatalists(); refreshFilters(); buildTagPanel(); buildSearchTags(); renderLit();refreshFolderSuggestions();
+};
+
+$('#close-manage-modal').onclick = () => $('#manage-modal').classList.add('hidden');
+/* ========== 新建收藏夹按钮（管理模态里） ========== */
+$('#new-folder-btn').onclick = addNewFolder;
+$('#new-folder-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter') addNewFolder();
+});
+
+function addNewFolder(){
+  const inp  = $('#new-folder-input');
+  const name = inp.value.trim();
+  if(!name) return;
+
+  /* 1) 若全局没有 → 新建并刷新 datalist / 侧栏 */
+  let isNew = false;
+  if(!data.folders.includes(name)){
+    data.folders.push(name);
+    refreshFilters(); 
+    isNew = true;
+  }
+
+  /* 2) 给当前文献勾选该收藏夹 */
+  const lit = data.literature.find(l => l.id === currentManageId);
+  if(lit && !lit.folders.includes(name)){
+    lit.folders.push(name);
+  }
+
+  save();
+  inp.value = '';
+
+  /* 3) UI：如果是新建 → append；否则只把已有复选框打勾 */
+  const box = $('#manage-folders');
+  let cb = box.querySelector(`input[value="${name}"]`);
+  if(!cb){
+    box.insertAdjacentHTML('beforeend',
+      `<label class='flex items-center gap-1 mr-2'>
+         <input type='checkbox' value='${name}' checked>${name}
+       </label>`);
+  }else{
+    cb.checked = true;
+  }
+}
+
+
+
+function refreshFolderSuggestions(){
+  const dl = document.getElementById('folder-suggestions');
+  if(!dl) return;
+  dl.innerHTML = '';
+  data.folders.forEach(f=>{
+    const opt = document.createElement('option');
+    opt.value = f;
+    dl.appendChild(opt);
+  });
+}
+/* 实时提示：只有输入后才显示匹配收藏夹 */
+const nfInput = document.getElementById('new-folder-input');
+nfInput.addEventListener('input', e=>{
+  const kw = e.target.value.trim().toLowerCase();
+  const dl = document.getElementById('folder-suggestions');
+  dl.innerHTML = '';
+  if(!kw) return;                           // ★ 输入为空就不写 option
+  data.folders
+      .filter(f => f.toLowerCase().includes(kw))
+      .forEach(f => dl.insertAdjacentHTML('beforeend', `<option value="${f}">`));
+});
+
+
+
+function addTagChip(tag) {
+  if (!tag) return;
+  const tagBox = $('#manage-tags-box'); if ([...tagBox.children].some(c => c.dataset.tag === tag)) return;
+  const span = document.createElement('span'); span.className = 'chip chip-removable mr-1 mt-1'; span.dataset.tag = tag; span.textContent = tag; span.onclick = e => e.currentTarget.remove(); tagBox.appendChild(span);
+}
+$('#manage-tag-input').addEventListener('keydown', e => { if (['Tab', 'Enter'].includes(e.key)) { e.preventDefault(); const v = e.target.value.trim(); if (v) { addTagChip(v); e.target.value = ''; } } });
+$('#manage-tag-input').addEventListener('change', e => { const v = e.target.value.trim(); if (v) { addTagChip(v); e.target.value = ''; } });
+
+
+
+/*************************
+ * 收藏夹重命名
+ *************************/
+$('#rename-folder').onclick = () => {
+  if (curFolder === '全部' || curFolder === '默认') return alert('无法重命名此收藏夹');
+  const newName = prompt('重命名收藏夹：', curFolder); if (!newName || newName === curFolder) return;
+  if (data.folders.includes(newName)) return alert('已存在同名收藏夹');
+  data.folders = data.folders.map(f => f === curFolder ? newName : f);
+  data.literature.forEach(l => { l.folders = l.folders.map(f => f === curFolder ? newName : f); l.tags = (l.tags || []).map(t => t === curFolder ? newName : t); });
+  save(); curFolder = newName;
+  refreshDatalists(); refreshFilters(); buildTagPanel(); buildSearchTags(); renderLit();
+};
+
+$('#add-folder').onclick = () =>{
+  const name = prompt('新建收藏夹：');
+  if(!name) return;
+  if(data.folders.includes(name)) return alert('已存在同名收藏夹');
+  data.folders.push(name);
+  save();
+  refreshDatalists(); refreshFilters();
+};
+
+function deleteFolderHandler(name){
+  if(!name || name==='全部' || name==='默认') return alert('无法删除该收藏夹');
+  const used = data.literature.some(l => l.folders.includes(name));
+  if(used && !confirm(`有文献仍在收藏夹 "${name}" 中。\n删除后这些文献将移至“默认”。继续？`) ) return;
+
+  /* 1) 从全局列表移除 */
+  data.folders = data.folders.filter(f => f !== name);
+
+  /* 2) 扫描文献，把同名收藏夹改为“默认” */
+  data.literature.forEach(l=>{
+    if(l.folders.includes(name)){
+      l.folders = l.folders.filter(f=>f!==name);
+      if(!l.folders.length) l.folders=['默认'];
+    }
+  });
+
+  save();
+  refreshDatalists(); refreshFilters();           // 侧栏下拉
+  buildManageFolders?.();                         // 若模态已开
+  alert('已删除收藏夹');
+}
+
+/* 右侧面板按钮 */
+$('#delete-folder').onclick = ()=>{
+  const name = $('#folder-filter').value;
+  deleteFolderHandler(name);
+};
+
+function buildManageFolders(){
+  const box = $('#manage-folders'); if(!box) return;
+  const lit = data.literature.find(l=>l.id===currentManageId);
+  box.innerHTML='';
+  data.folders.forEach(f=>{
+    box.insertAdjacentHTML('beforeend',
+      `<label class='flex items-center gap-1 mr-2'>
+         <input type='checkbox' value='${f}' ${lit.folders.includes(f)?'checked':''}>${f}
+       </label>`);
+  });
+}
+
+
+/******************************
+ *  ✎ Tag 编辑：重命名 / 删除
+ ******************************/
+$('#edit-tags').onclick = () => {
+  tagEditMode = !tagEditMode;                         // 切换模式
+  $('#edit-tags').textContent = tagEditMode ? '完成' : '✎ 编辑';
+  buildTagPanel();                                    // 重新渲染 Tag 列表
+};
+
+/* ====== 下载数据 ====== */
+$('#export-data').onclick = ()=>{
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `bibData_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+};
+
+
+/* ====== 导入数据 ====== */
+$('#import-data').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  e.target.value='';                          // 清空选择
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev=>{
+    try{
+      const obj = JSON.parse(ev.target.result);
+      if(!obj.literature || !obj.notes || !obj.folders)
+        return alert('JSON 结构不合法！');
+      if(!confirm('这将覆盖当前数据，确定继续？')) return;
+
+      data = obj;
+      save();                                // 写回 localStorage
+      // 全面刷新各 UI
+      refreshDatalists(); refreshFilters(); buildTagPanel(); buildSearchTags();
+      renderNotes(); renderLit();
+      alert('导入成功！');
+    }catch(err){ alert('解析 JSON 失败：'+err.message); }
+  };
+  reader.readAsText(file,'utf-8');
+});
+
+
+/*************************
+ * 事件监听 – 其它
+ *************************/
+$('#folder-filter').onchange=e=>{curFolder=e.target.value; page=1; renderLit();};
+$('#page-size').onchange=e=>{const v=parseInt(e.target.value); if(v>0){ ps=v; localStorage.setItem('ps',v); page=1; renderLit(); }};
+
+// 搜索框
+$('#search').oninput=e=>{searchTxt=e.target.value.trim().toLowerCase();};
+$('#search').addEventListener('keydown',e=>{ if(e.key==='Enter'){ page=1; renderLit(); }});
+$('#search-current').onclick=()=>{page=1; renderLit();};
+$('#search-global').onclick=()=>{page=1; renderLit(true);};
+$('#clear-lit-filter').onclick = ()=>{
+  // 1) 重置所有内存状态
+  tagFilters.length      = 0;
+  litFilterIDs.length    = 0;
+  authorFilter           = '全部';
+  importanceFilter       = '全部';
+  readFilter             = '全部';
+  curFolder              = '全部';
+  searchTxt              = '';
+  $('#search').value     = '';
+
+  // 2) 重绘 UI
+  page = 1;
+  buildTagPanel();       // 侧栏标签高亮复位
+  buildSearchTags();     // 三彩色栏复位
+  refreshFilters();      // 右侧收藏夹下拉复位
+  renderLit();           // 重新渲染列表
+};
+
+
+/*************************
+ * 初始化
+ *************************/
+refreshDatalists();
+refreshFilters();
+buildTagPanel();
+buildSearchTags();
+renderLit();
+</script>
+</body>
+</html>
